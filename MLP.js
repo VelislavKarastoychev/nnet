@@ -1,4 +1,8 @@
 'use strict'
+let euriklis = require('euriklis')
+let { Neuron } = require('./neuron')
+let { Layer } = require('./layer')
+let fs = require('fs')
 class MLP {
     constructor(options) {
         let architecture2arr, i, j, k, len,
@@ -244,7 +248,7 @@ class MLP {
         return this
     }
     // todo: activation method for neuron and layer!!!
-    activate(example) {
+    activate(example, output) {
         // the example has to be homogenious
         // with the data structure
         if (!this.otherParameters.data) {
@@ -260,22 +264,26 @@ class MLP {
                 if (currLayer === 0) {
                     let currInputNeuron
                     for (currInputNeuron = 0; currInputNeuron < this.otherParameters.Layers[currLayer].neurons.length; currInputNeuron++) {
-                        this.otherParameters.Layers[currLayer]
+                        this.otherParameters
+                            .Layers[currLayer]
                             .neurons[currInputNeuron].output = example[currInputNeuron]
                     }
+                    //this.otherParameters.Layers[currLayer].activate()
                 } else {
                     let currLayerm1 = currLayer - 1
-                    for (let li = 0; li < this.hiddenLayersSize[currLayerm1]; li++) {
+                    for (let li = 0; li < this.otherParameters.Layers[currLayer].neurons.length; li++) {
                         for (let ni = 0; ni < this.otherParameters.Layers[currLayerm1].neurons.length; ni++) {
                             this.otherParameters
                                 .Layers[currLayer]
                                 .neurons[li]
-                                .inputs[ni].value = this.otherParameters.Layers[currLayerm1].neurons[ni].output
+                                .inputs[ni].value = this.otherParameters
+                                    .Layers[currLayerm1].neurons[ni].output
                         }
                     }
                     this.otherParameters.Layers[currLayer].activate()
                 }
             }
+            if (output) this.computeError(output)
         }
         if (example.constructor === Object) {
             if (Object.keys(example).every(prop => {
@@ -309,255 +317,317 @@ class MLP {
         } else if (!(example instanceof Array)) throw new Error(`The example have to be Object or Array type.`)
         return this
     }
-    propagate(example, check) {
-        // we need the output
-        // so here example is 
-        // assumed to be the 
-        // output from the data
-        // or the output for the
-        // last inserted example
-        // ...................
-        // if do not exists data 
-        // propagation can not be done.
-        if (this.otherParameters.data === null) {
-            if (!this.otherParameters.messages) this.otherParameters.messages = []
-            this.otherParameters.messages.push(`To make propagation is better to insert data for learning.`)
-        }
-        // ...................
-        if (example.constructor === Array) {
-            // paropagate for array
-            if (example.length !== this.outputSize) {
-                throw new Error(`Bad output example. The output of the network has dimension ${this.outputSize} and the example ${example.length}.`)
-            }
-            // check if the elements of
-            // the example are numbers
-            if (typeof check !== 'undefined' && check) {
-                if (example.some(el => {
-                    return isNaN(el)
-                })) throw new Error(`The output example in propagate is NaN.`)
-            }
-            // L --> the last layer
-            let L = this.hiddenLayersSize.length + 1,
-                outNeurons = this.outputSize, layer, i
-            for (i = 0; i < outNeurons; i++) this.otherParameters.Layers[L].neurons[i].target = example[i]
-            // compute the error from the target
-            this.otherParameters
-                .Layers[L]
-                .neurons.forEach(neuron => {
-                    return neuron.error = neuron.target - neuron.output
-                })
-            this.otherParameters.Layers[L].squareError = this.otherParameters
-                .Layers[L].neurons.map(el => {
-                    return el.error * el.error
-                }).reduce((a, b) => { return a + b }, 0)
-            // compute the delta for the last layer:
-            // with the formula delta[i] = f'(v[i])*error[i]
-            this.otherParameters
-                .Layers[L]
-                .neurons
-                .forEach(neuron => {
-                    return neuron.delta = neuron.activation.derivative(...[
-                        neuron['functional signal'],
-                        ...neuron.activation.parameters
-                    ]) * neuron.error
-                })
-            // compute the delta for the other
-            // neurons with the formula:
-            // Layers[l].delta[i] = f'(v[i]) * Σ w[k][i] * Layers[l + 1].delta[k]
-            // where k is the number of all neurons
-            // of the hidden layer l + 1
-            for (layer = L - 1; layer > 0; layer--) {
-                let lp1n = this.otherParameters
-                    .Layers[layer + 1].neurons
-                this.otherParameters
-                    .Layers[layer]
-                    .neurons.forEach((neuron, j) => {
-                        let sumWkjTdeltak = 0
-                        lp1n.forEach((neuronlp1, k) => {
-                            sumWkjTdeltak += neuronlp1.delta * this._getWeight({
-                                source: { neuron: j, layer: layer },
-                                target: { neuron: k, layer: layer + 1 }
-                            })
-                        })
-                        neuron.delta = neuron
-                            .activation
-                            .derivative(...[neuron['functional signal'],
-                            ...neuron.activation.parameters
-                            ]) * sumWkjTdeltak
-                    })
-            }
-            return this
-        } else {
-            if (example.constructor === Object) {
-                // transform the Object to array
-                // and call again with the transformed
-                // array...
-                let transformedExample
-                // the example output have to
-                // be with the same property structure
-                // as the data outputLabel elements
-                if (Object.keys(example).length !== this.outputSize) {
-                    throw new Error(`Bad output example. The example have to be with the same dimension like the output layer.`)
-                }
-                if (Object.values(example).some(value => {
-                    return isNaN(value)
-                })) throw new Error(`Bad output example.The values of the output have to be numbers.`)
-                if (this.otherParameters.data === null) throw new Error(`To make propagation you firs have to insert data to the network.`)
-                if (!Object.keys(example).every(function (key) {
-                    return this.otherParameters.data.outputLabels.some(label => {
-                        return label === key
-                    })
-                })) throw new Error(`All the properties of the example have to be same with the data output properties.`)
-                transformedExample = Array
-                    .from({ length: this.otherParameters.data.outputLabels.length })
-                    .map((d, i) => {
-                        let key = this.otherParameters.data.outputLabels[i]
-                        return d = example[key]
-                    })
-                return this.propagate(transformedExample)
-            } else throw new Error(`The output example is not correct. The type of an example can be Array ot Object.`)
-        }
-    }
     train(options) {
         // if options do not exist
         // or are uncomplete defined
         // set them to the default
-        let epoch, err = 0, ofile
         if (typeof options === 'undefined') options = defaultTrainOptions('all')
+        if (dataDoNotExists(this)) throw new Error('To train the network inserting of data is required, so insert data by the data method.')
         if (options instanceof Object) {
-            let opt = Object.keys(options)
-            if (isEmptyArray(opt)) options = defaultTrainOptions('all')
-            else options = setOmitedTrainOptions(options)
-            let momentum = options.momentum,
-                maxiter = options['max iterations'],
-                ita = options['learning rate'],
-                minerror = options['minimal error'],
-                wnm1 = [], wnm2 = [], l, j, i, wlji,
-                inputExamples = this.otherParameters
-                    .data.input, deltaj, ylm1i,
-                outputExamples = this.otherParameters
-                    .data.output, rndInputExamples,
-                rndOutputExamples, rndExamples, biasnm1 = [], biasnm2 = [],
-                inputExample, outputExample, dwnm1, bias, dbiasnm1
-            // update weights:
-            // .................................
-            // w(l, j, i, n + 1) = w(l, j, i, n) + 
-            // momentum * dw(l, j, i, n - 1) + 
-            // delta(l, j, n) * y(l - 1, i, n)
-            // .................................
-            // where l is current layer, j is
-            // the target neuron, i is the source
-            // neuron (in layer l - 1), n is the
-            // time period, y is the output of
-            // the neuron and w is the weight
-            // for i = -1 (for zero indexed)
-            // arrays w is the bias of neuron j
-            // and y is equals to 1. For l = 0
-            // we have the input parameters for y.
-            epoch = 0
-            /*ofile = fs.createWriteStream('MyNetwork.docx', 'utf-8')
-            ofile.write(`The architecture of the network is ${this.architecture}\n`)
-            ofile.write(`The activation function is 1 / (1 + a * Math.exp(-b * x)), where a = b = 1\n`)
-            ofile.write(`The derivative activation function is a * b * Math.exp(b * x) / ((a + Math.exp(b * x)) * (a + Math.exp(b * x))), where a = b = 1\n`)
-            ofile.write(`The weights of the network are:\n`)
-            for (l = 1;l < 2 + this.hiddenLayersSize.length;l++) {
-                for (j = 0;j < this.otherParameters.Layers[l].neurons.length;j++) {
-                    ofile.write(`Bias(${l}, ${j + 1}) = ${this._getBias({layer : l, neuron : j})}\n`)
-                    for (i = 0;i < this.otherParameters.Layers[l - 1].neurons.length;i++) {
-                        ofile.write(`W(${l}, ${j + 1}, ${i + 1}) = ${this._getWeight({
-                            source : {neuron : i, layer : l - 1},
-                            target : {neuron : j, layer : l}
-                        })}\n`)
-                    }
-                }
-            }*/
-            do {
-                ++epoch
-                //ofile.write(`Epoch ${epoch}\n`)
-                rndExamples = randomize(inputExamples, outputExamples)
-                rndInputExamples = rndExamples.input
-                rndOutputExamples = rndExamples.output
-                for (let n = 0; n < rndInputExamples.length; n++) {
-                    inputExample = rndInputExamples[n]
-                    outputExample = rndOutputExamples[n]
-                    //ofile.write(`Input example: ${JSON.stringify(inputExample)}\n`)
-                    //ofile.write(`Output example: ${JSON.stringify(outputExample)}\n`)
-                    this.activate(inputExample)
-                        .propagate(outputExample)
-                    /*for (let p = 0;p < this.outputSize;p++) {
-                        ofile.write(`The error of output neuron ${p + 1} is ` 
-                        + `${this.otherParameters.Layers[this.hiddenLayersSize.length + 1].neurons[p].error}\n` 
-                        + ` for the target ${this.otherParameters.Layers[this.hiddenLayersSize.length + 1].neurons[p].target}\n`)
-                    }*/
-                    // set the weights:
-                    for (l = 1; l < this.hiddenLayersSize.length + 2; l++) {
-                        if (n === 0 && epoch === 1) {
-                            wnm1[l] = []
-                            wnm2[l] = []
+            // checkForCorrectTrainingMethod(options)
+            switch (options.method) {
+                case 'backpropagation':
+                    console.log('go to backpropagation')
+                    this.backpropagation(options)
+                    break
+                case 'quickprop':
+                    this._quickprop(options)
+                    break
+                case 'cgd':
+                    this._conjugateGradientDescent(options)
+                    break
+                case 'conjugate gradient descent':
+                    this._conjugateGradientDescent(options)
+                    break
+            }
+        }
+        return this
+    }
+    backpropagation(options) {
+        if (!(options instanceof Object)) throw new Error(`Internal Error: non declared options for backpropagation`)
+        // initialization of the variables:
+        const neuronsInLayer = (l) => {
+            return this.otherParameters
+                .Layers[l].neurons.length
+        }
+        let epoch = 0, err = 0,
+            opt = Object.keys(options)
+        if (isEmptyArray(opt)) options = defaultTrainOptions('all')
+        else options = setOmitedTrainOptions(options)
+        let momentum = options.momentum,
+            maxiter = options['max iterations'],
+            ita = options['learning rate'],
+            minerror = options['minimal error'],
+            wnm1 = [], wnm2 = [], l, j, i, wlji,
+            inputExamples = this.otherParameters
+                .data.input, deltaj, ylm1i, n,
+            outputExamples = this.otherParameters
+                .data.output, rndInputExamples,
+            rndOutputExamples, rndExamples, biasnm1 = [], biasnm2 = [],
+            inputExample, outputExample, dwnm1, bias, dbiasnm1,
+            L = this.otherParameters
+                .Layers.length// depth of the network
+        // update weights:
+        // .................................
+        // w(l, j, i, n + 1) = w(l, j, i, n) + 
+        // momentum * dw(l, j, i, n - 1) + 
+        // delta(l, j, n) * y(l - 1, i, n)
+        // .................................
+        // where l is current layer, j is
+        // the target neuron, i is the source
+        // neuron (in layer l - 1), n is the
+        // time period, y is the output of
+        // the neuron and w is the weight
+        // for i = -1 (for zero indexed)
+        // arrays w is the bias of neuron j
+        // and y is equals to 1. For l = 0
+        // we have the input parameters for y.
+        // ...................................
+        // compute the initial error:
+        inputExamples.forEach((input, i) => {
+            err += this.activate(input)
+                .computeError(outputExamples[i])
+            err /= inputExamples.length
+        })
+        do {
+            // step 0: Check for stop criteria:
+            if (epoch > maxiter || err < minerror) break
+            ++epoch
+            // step 1: randomize the data
+            rndExamples = randomize(inputExamples, outputExamples)
+            rndInputExamples = inputExamples// rndExamples.input
+            rndOutputExamples = outputExamples//rndExamples.output
+            for (n = 0; n < rndInputExamples.length; n++) {
+                inputExample = rndInputExamples[n]
+                outputExample = rndOutputExamples[n]
+                // step 2: For every example make
+                // activation of the network...
+                this.activate(inputExample, outputExample)
+                // step 3: Compute the deltas for
+                // every layer and update the weights
+                // back propagation...
+                for (l = L - 1; l > 0; l--) {
+                    if (n === 0 && epoch === 1)
+                        if (momentum !== 0) {
                             biasnm1[l] = []
                             biasnm2[l] = []
+                            wnm1[l] = []
+                            wnm2[l] = []
                         }
-                        for (j = 0; j < this.otherParameters.Layers[l].neurons.length; j++) {
+                    // compute the delta
+                    for (j = 0; j < neuronsInLayer(l); j++) {
+                        if (l === L - 1) {
+                            this.otherParameters
+                                .Layers[l]
+                                .neurons[j]
+                                .delta = this.otherParameters
+                                    .Layers[l]
+                                    .neurons[j]
+                                    .activation.derivative(...[
+                                        this.otherParameters
+                                            .Layers[l]
+                                            .neurons[j]['functional signal'],
+                                        ...this.otherParameters
+                                            .Layers[l]
+                                            .neurons[j]
+                                            .activation.parameters
+                                    ]) * this.otherParameters
+                                        .Layers[l]
+                                        .neurons[j]
+                                    .error
+                        } else {
+                            let sumWkjTdeltak = 0
+                            for (let k = 0; k < neuronsInLayer(l + 1); k++) {
+                                sumWkjTdeltak += this.otherParameters
+                                    .Layers[l + 1]
+                                    .neurons[k]
+                                    .delta * this._getWeight({
+                                        source: { layer: l, neuron: j },
+                                        target: { layer: l + 1, neuron: k }
+                                    })
+                            }
+                            this.otherParameters
+                                .Layers[l]
+                                .neurons[j]
+                                .delta = this.otherParameters
+                                    .Layers[l]
+                                    .neurons[j]
+                                    .activation.derivative(...[
+                                        this.otherParameters.Layers[l]
+                                            .neurons[j]['functional signal'],
+                                        ...this.otherParameters
+                                            .Layers[l]
+                                            .neurons[j]
+                                            .activation.parameters
+                                    ]) * sumWkjTdeltak
+                        }
+                        // update the bias
+                        let blj = this._getBias({ layer: l, neuron: j })
+                        deltaj = this.otherParameters
+                            .Layers[l].neurons[j].delta
+                        if (momentum !== 0) {
                             if (n === 0 && epoch === 1) {
+                                biasnm1[l][j] = 0.0
                                 wnm1[l][j] = []
                                 wnm2[l][j] = []
                             }
-                            deltaj = this.otherParameters
-                                .Layers[l].neurons[j].delta
-                            /////
-                            bias = this._getBias({ neuron: j, layer: l })
-                            //ofile.write(`The bias of neuron ${j + 1} in layer ${l} = ${bias}\n`)
-                            //ofile.write(`δ(${l}, ${j + 1}) = ${deltaj}\n`)
-                            if (n < 2 && epoch === 1) dbiasnm1 = 0
-                            else {
-                                dbiasnm1 = biasnm1[l][j] - biasnm2[l][j]
-                            }
-                            this._setBias({
-                                neuron: j,
-                                layer: l,
-                                value: bias + momentum * dbiasnm1 + ita * deltaj
-                            })
-                            //ofile.write(`The new bias(${l}, ${j + 1}) = ${bias + momentum * dbiasnm1 + ita * deltaj}\n`)
-                            if ((n > 0 && epoch === 1) || epoch > 1) {
-                                biasnm2[l][j] = biasnm1[l][j]
-                            }
-                            biasnm1[l][j] = bias
-                            for (i = 0; i < this.otherParameters.Layers[l - 1].neurons.length; i++) {
-                                wlji = this._getWeight({
-                                    source: { neuron: i, layer: l - 1 },
-                                    target: { neuron: j, layer: l }
-                                })
-                                //ofile.write(`W(${l}, ${j + 1}, ${i + 1}}) = ${wlji}\n`)
+                            biasnm2[l][j] = biasnm1[l][j]
+                            biasnm1[l][j] = blj
+                        }
+                        if (((n > 1 && epoch === 1) || epoch > 1) && momentum !== 0) {
+                            dbiasnm1 = biasnm1[l][j] - biasnm2[l][j]
+                        } else dbiasnm1 = 0
+                        //console.log(`db(${l}), ${j + 1}) = ${dbiasnm1}`)
+                        blj = blj + momentum * dbiasnm1 + ita * deltaj
+                        this._setBias({ layer: l, neuron: j, value: blj })
+                        for (i = 0; i < neuronsInLayer(l - 1); i++) {
+                            // update the weights
+                            let source = { layer: l - 1, neuron: i },
+                                target = { layer: l, neuron: j },
                                 ylm1i = this.otherParameters
-                                    .Layers[l - 1].neurons[i].output
-                                //ofile.write(`y(${l - 1}, ${i + 1}) = ${ylm1i}\n`)
-                                if ((n < 2 && epoch === 1)) dwnm1 = 0
-                                else {
-                                    dwnm1 = wnm1[l][j][i] - wnm2[l][j][i]
-                                }
-                                this._setWeight({
-                                    source: { neuron: i, layer: l - 1 },
-                                    target: { neuron: j, layer: l },
-                                    value: wlji + momentum * dwnm1 + ita * deltaj * ylm1i
-                                })
-                                //ofile.write(`the new weight W(${l}, ${j + 1}, ${i + 1}) = ${wlji + momentum * dwnm1 + ita * deltaj * ylm1i}\n`)
-                                if ((n > 0 && epoch === 1) || epoch > 1) {
-                                    wnm2[l][j][i] = wnm1[l][j][i]
-                                }
+                                    .Layers[l - 1]
+                                    .neurons[i].output
+                            if (momentum !== 0) {
+                                if (n === 0 && epoch === 1) wnm1[l][j][i] = 0.0
+                                wnm2[l][j][i] = wnm1[l][j][i]
                                 wnm1[l][j][i] = wlji
                             }
+                            if (momentum !== 0 && ((n > 1 && epoch === 1) || epoch > 1)) {
+                                dwnm1 = wnm1[l][j][i] - wnm2[l][j][i]
+                            } else dwnm1 = 0
+                            wlji = this._getWeight({ source, target })
+                            //console.log(`dw(${l}, ${j + 1}, ${i + 1}) = ${dwnm1}`)
+                            wlji += momentum * dwnm1 + ita * deltaj * ylm1i
+                            this._setWeight({
+                                source,
+                                target,
+                                value: wlji
+                            })
                         }
                     }
-                    err += this.otherParameters.Layers[this.hiddenLayersSize.length + 1].squareError
                 }
+            }
+            err = 0
+            inputExamples.forEach((input, i) => {
+                err += this.activate(input)
+                    .computeError(outputExamples[i])
                 err /= inputExamples.length
-                //ofile.write(`error : ${err}\n`)
-            } while (epoch <= maxiter && err > minerror)
-        }
-        //ofile.end()
+            })
+        } while (1)
         this.otherParameters.epochs = epoch
-        this.otherParameters.error = err
+        this.otherParameters['training error'] = err
         return this
+    }
+    _quickprop(options) {
+        // implementation of the 
+        // Fahlman algorithm. The
+        // adaptive formula is given
+        // from Konstantinos Diamandaras
+        // "Τεχνιτά Νευρωνικά δίκτυα", 
+        // press "Κλειδά«ριθμος", 2007, 
+        // pp. 69-70 and also in the book
+        // "Neural networks and statistical learning"
+        // M.N.s. Swamy and K.-L. Du, pp. 111
+        // set the additionally the options:
+        if (isNaN(options['max iterations'])) {
+            options['max iterations'] = 10
+        }
+        if (isNaN(options['minimal error'])) {
+            options['minimal error'] = 1e-4
+        }
+        if (isNaN(options['maximum growth factor'])) {
+            options['maximum growth factor'] = 1.75
+        }
+        // check if data is declared:
+        // updatind weights formula
+        // Δw(l, i, j, t + 1) = 
+        // Δw(l, i, j, t) 
+        // * [g(l, i, j, t) / (g(l, i, j, t - 1) - g(l, i, j, t)]
+        // g = J'(w)
+        // Using of the gradient function
+        // this function make use of two parameters
+        // the function and an one - dimensional Array
+        // of the initial vector argument
+        const gradient = euriklis.Mathematics.gradient,
+            minerr = options['minimal error'],
+            maxiterations = options['max iterations'],
+            cost =  (w) => {
+                // w is an one - dimension array
+                // that composite the weights in 
+                // an arbitrary order
+                setNetworkWeights(w, this)
+                let err = this.activate(example.input)
+                    .computeError(example.output)
+                this.otherParameters.Layers[this.hiddenLayersSize.length + 1]
+                    .squareError = this.otherParameters.Layers[this.hiddenLayersSize.length + 1]
+                        .neurons.map(neuron => {
+                            return neuron.error * neuron.error
+                        }).reduce(sumarize, 0)
+                return err
+            },
+            examples = areInsertedExampelesInOptions(options) ?
+                options.examples : this.otherParameters.data
+        let w0 = orderWeightsTo1DimArray(this), it = 0,
+            err = (example) => {
+                return this.activate(example.input)
+                    .computeError(example.output)
+            }, g, dw = Array.from({ length: w0.length })
+                .map(wi => {
+                    return wi = 0
+                }),
+            gm1 = Array({ length: w0.length })
+                .map(gi => {
+                    return gi = 0
+                }), mju = options['maximum growth factor'],
+            ita = options['learning rate'], example, k,
+            gerr = 0
+        do {
+            ++it
+            gerr = 0
+            // update weights
+            // hint: the dw is an array
+            // that contains the values of
+            // dcost(w0)/dw0, where w0 is
+            // an array of the weights of 
+            // the network...
+            for (k = 0; k < examples.input.length; k++) {
+                example = {input : examples.input[k], output : examples.output[k]}
+                g = gradient(cost, w0)
+                // Δw(l, i, j, t + 1) = 
+                // Δw(l, i, j, t) 
+                // * [g(l, i, j, t) / (g(l, i, j, t - 1) - g(l, i, j, t)]
+                // g = J'(w)
+                // dw(t + 1)
+                dw = computedw(dw, g, gm1, mju, ita)
+                console.log(dw)
+                w0 = w0.map((wi, i) => {
+                    return wi += dw[i]
+                })
+                // gm1 = g
+                gm1.forEach((gi, i) => {
+                    gi = g[i]
+                })
+                gerr += err(example)
+            }
+        } while (it < maxiterations && gerr > minerr)
+        this.otherParameters['training error'] = err({input : examples.input[0], output : examples.output[0]})
+        this.otherParameters.epochs = it
+        return this
+    }
+    computeError(output) {
+        let err = 0
+        this.otherParameters
+            .Layers[this.hiddenLayersSize.length + 1]
+            .neurons
+            .forEach((neuron, i) => {
+                neuron.target = output[i]
+                neuron.error = neuron.target - neuron.output
+                err += (neuron.error * neuron.error)
+            })
+        this.otherParameters
+            .Layers[this.hiddenLayersSize.length + 1]
+            .squareError = err
+        return err
     }
     addNeuron(parameters) {
         // if the parameters 
@@ -961,8 +1031,6 @@ class MLP {
         }
     }
 }
-// todo: createNeuronConnections method ...
-// todo: activation.f and the others utility functions
 const isEmptyArray = (arr) => {
     return arr === "undefined" || arr.length === 0
 },
@@ -1008,10 +1076,11 @@ function defaultTrainOptions(option) {
     if (typeof option === 'undefined') option = 'all'
     if (typeof option !== 'string') throw new Error(`Internal error in default train options.`)
     let options = {
-        'learning rate': 0.05,
+        'method': 'backpropagation',
+        'learning rate': 0.09,
         'momentum': 0.0,
-        'max iterations': 6000,
-        'minimal error': 1e-6,
+        'max iterations': 10e5,
+        'minimal error': 1e-4,
         'adaptive control': 'constant learning rate'
     }
     if (option === 'all') return options
@@ -1026,411 +1095,113 @@ function setOmitedTrainOptions(options) {
     })
     return options
 }
-function random(m,seed){
-    var i,j,k,rn
-    for(i = 0;i < m;i++){
-            seed = parseInt(seed);
-            k = parseInt(seed/127773);
-            seed = parseInt(16807*(seed - k*127773)- k*2836);
-            if ( seed < 0 )seed += 2147483647;
-            rn = seed*4.656612875e-10;
-    }
-    return rn;
-}
-class Layer {
-    constructor(options) {
-        if (typeof options === "undefined") {
-            throw new Error("Uncorrect Layer declaration. To create an layer you have to inside an object with properties 'layer' and 'neurons'.")
+function setNetworkWeights(w, network) {
+    // L number of layers, 
+    //nl neurons in every layer
+    let L = network
+        .hiddenLayersSize
+        .length + 2, l, k,
+        neuronl, neuronlm1,
+        q = 0, value,
+        n = (l) => {
+            return network
+                .otherParameters
+                .Layers[l].neurons.length
         }
-        this.type = options.type || 'hidden'
-        this.layer = options.layer
-        this.neurons = typeof options.neurons === "undefined"
-            ? [] : options.neurons.constructor === Array
-                ? options.neurons : []
-        if (Number.isInteger(options.layer)) {
-            this.layer = options.layer
-        }
-    }
-    activate() {
-        let neurons = this.neurons.length,
-            neuron
-        for (neuron = 0; neuron < neurons; neuron++) {
-            this.neurons[neuron].activate()
-        }
-    }
-}
-function createLayerID(lid) {
-    if (!Number.isInteger(lid)) {
-        throw new Error(`The layer id have to be number type`)
-    } else return Number(lid)
-}
-function createId(nid) {
-    if (!Number.isInteger(nid)) throw new Error(`The neuron id have to be only number type.`)
-    else return Number(nid)
-}
-let availableFunctions = {
-    "tanh": {
-        f: (x, a, b) => { return a * Math.tanh(b * x) },
-        derivative: (x, a, b) => { return a * b * (1 - Math.tanh(b * x) * Math.tanh(b * x)) },
-        defaultParameters: [1.7159, 2 / 3]
-    },
-    "logistic": {
-        f: (x, a, b) => { return 1 / (1 + a * Math.exp(-b * x)) },
-        derivative: (x, a, b) => { return a * b * Math.exp(b * x) / ((a + Math.exp(b * x)) * (a + Math.exp(b * x))) },
-        defaultParameters: [1, 1]
-    },
-    "ReLU": {
-        f: (x, a, b) => {
-            if ((a * x + b) < 0) return 0
-            else return x
-        },
-        derivative: (x, a, b) => {
-            if ((a * x + b) < 0) return 0
-            else return 1
-        },
-        defaultParameters: [1, 0]
-    }
-}
-/*   availableAdaptiveRateControl = {
-        "Darken and Moody": {
-            f: (t, ita0, tau) => {
-                return ita0 * tau / (t + tau)
-            },
-            "Initial ita": 0.1,
-            "Tau": Math.max(...[this.otherParameters.data.input.length / 10 | 0, 1])
-        },
-        "Haykin": {
-            f: (n, nswitch, alpha) => {
-                return (nswitch / (n + nswitch)) * (alpha / this.getWeightsIverseHessian().eigenvalueByPowerMethod())
-            },
-            'Initial n switch': 5,
-            'Alpha': 1
-        },
-        'Murata': {
-            f: (r, ita, alpha, beta, gamma) => {
-                if (typeof r === 'undefined') r = [Array.from({ length: this.output }).map(el => { return el = 0; })].toMatrix()
-                if (typeof ita === 'undefined') ita = 0.1
-                r = r.plus(this.otherParameters.training.y.times(gamma))
-                ita = ita + alpha * ita * (beta * r.FrobeniusNorm() - ita)
-                return { ita, r, alpha, beta, gamma }
-            },
-            'Initial ita': 0.1,
-            'Alpha': 0.5, 'Beta': 0.5, 'Gamma': 0.4
-        }
-    } */
-function createActivation(options) {
-    // 1. options are not defined 
-    // set to the default activation 
-    // function...
-    if (typeof options === 'undefined') return {
-        f: availableFunctions['logistic'].f,
-        derivative: availableFunctions['logistic'].derivative,
-        parameters: availableFunctions['logistic'].defaultParameters
-    }
-    // 2. If options are string check
-    // if the function is available
-    // and set the activation to the
-    // available function...
-    if (typeof options === 'string') {
-        if (availableFunctions.some(functionObj => {
-            return functionObj.f === options.toLowerCase()
-        })) {
-            let strOpt = options.toLowerCase(),
-                optFunction = availableFunctions[strOpt]
-            return {
-                f: optFunction.f,
-                derivative: optFunction.derivative,
-                parameters: optFunction.defaultParameters
-            }
-        }
-    }
-    if (typeof options === 'object') {
-        // 3. If the options is Object type
-        // then check if the f property is 
-        // string that is equal to the 
-        // parameters of the available functions,
-        // set the f property to the
-        // available function and set the
-        // parameters property to the 
-        // parameters key of the options
-        // if options.parameters do not 
-        // exists set the parameters to 
-        // the default parameters of the
-        // available function
-        if (typeof options.f === 'string') {
-            if (availableFunctions.some(functionObj => {
-                return functionObj.f === options.f.toLowerCase()
-            })) {
-                let strOpt = options.f.toLowerCase(),
-                    optFunction = availableFunctions[strOpt],
-                    currParameters
-                if (options.parameters.constructor === Array) {
-                    if (options.parameters.every(param => {
-                        return !isNaN(param)
-                            && options
-                                .parameters
-                                .length === optFunction
-                                    .defaultParameters
-                                .length
-                    })) currParameters = options.parameters
-                    else currParameters = optFunction.defaultParameters
-                } else currParameters = optFunction.defaultParameters
-                return {
-                    f: optFunction.f,
-                    derivative: optFunction.derivative,
-                    parameters: currParameters
-                }
-            } else throw new Error(`The activation function ${options.f} is not available.`)
-        }
-        if (options.f instanceof Function
-            && options.derivative instanceof Function) {
-            if (options.parameters.constructor === Array) {
-                if (options.parameters.length === options.f.arguments - 1) {
-                    return options
-                } else throw new Error(`The parameters argument is not correct.`)
-            }
-        } else throw new Error(`The options in activate method are not correctly declared!`)
-    } else {
-        options = null
-        return createActivation(options)
-    }
-}
-class Neuron {
-    constructor(parameters) {
-        if (typeof parameters !== "undefined") {
-            if (typeof parameters.layer !== 'undefined') {
-                this.layer = createLayerID(parameters.layer)
-            } else throw new Error("Uncorrect layer id parameter declaration in Neuron.")
-            if (typeof parameters.neuron !== 'undefined') {
-                this.neuron = createId(parameters.neuron)
-            } else throw new Error("Uncorrect id parameter declaration in Neuron.")
-            if (typeof parameters.inputs !== "undefined") {
-                let correctInputs = parameters.inputs.every(input => {
-                    let isLegalInput = input.constructor === Object
-                        && typeof input.layer === "number"
-                        && typeof input.neuron === "number"
-                        && typeof input.value === "number"
-                        && typeof input.weight === "number"
-                        && typeof input.bias === "number"
-                    return isLegalInput
+    for (l = 1; l < L; l++) {
+        for (neuronl = 0; neuronl < n(l); neuronl++) {
+            for (neuronlm1 = -1; neuronlm1 < n(l - 1); neuronlm1++) {
+                k = q + neuronl * (n(l - 1) + 1) + neuronlm1 + 1
+                value = w[k]
+                if (neuronlm1 === -1) network._setBias({
+                    layer: l, neuron: neuronl, value
                 })
-                if (!correctInputs) throw new Error(`Uncorrect input parameters in neuron ${this.id} of layer ${this.layerID}`)
+                else network._setWeight({
+                    source: { layer: l - 1, neuron: neuronlm1 },
+                    target: { layer: l, neuron: neuronl },
+                    value
+                })
             }
         }
-        this.type = typeof parameters.type === "undefined"
-            ? "hidden" : parameters.type
-        if (this.type === 'hidden' || this.type === 'output') {
-            this.inputs = typeof parameters.inputs === "undefined"
-                ? [] : parameters.inputs
-        }
-        // array with object elements
-        // that have the following properties:
-        // 1."layer", 2."neuron", 3. "value",
-        // 4. "weight", 5.activation
-        if (this.type !== 'input') this.activation = createActivation(parameters.activation)
-        // object with properties:
-        // 1. f --> the activation function
-        // 2. derivative --> the derivative function of f
-        // 3. parameters --> an array with additional
-        // values for the activation function
-        if (this.type !== 'input') {
-            this.bias = typeof parameters.bias === 'undefined'
-                ? null : parameters.bias
-        }
-        this.output = parameters.output || null
-        if (this.type !== 'input') this.activate()
-        // null type
-        if (this.type === 'output') {
-            this.target = null
-            this.error = null
-        }
-    }
-    activate() {
-        if (this._isCompleted()) {
-            this['functional signal'] = this.inputs.map(input => {
-                return input.weight * input.value
-            })
-                .reduce((val1, val2) => { return val1 + val2 }, this.bias)
-            this.output = this.activation.f(...[
-                this['functional signal'],
-                ...this.activation.parameters
-            ])
-        }
-    }
-    _setActivation(opt) {
-        this.activation = createActivation(opt)
-    }
-    _isCompleted() {
-        // 1.The bias have to be declared.
-        // 2.The weights have to be declared.
-        // 3.The values (the output of the 
-        // input neurons) have to be declared.
-        if (isNaN(this.bias)) return false
-        if (this.inputs.length === 0) return false
-        if (this.inputs.some(input => input.constructor !== Object)) {
-            return false
-        }
-        if (this.inputs.some(input => {
-            typeof input.weight === 'undefined'
-                || typeof input.weight !== 'number'
-                || typeof input.value === 'undefined'
-                || typeof input.value !== 'number'
-        })) return false
-        return true
+        q += n(l) * (n(l - 1) + 1)
     }
 }
-// test for XOR problem:
-let net = new MLP({architecture : '2-2-1'})
-.data({input : [[1,1], [0, 0], [1, 0], [0, 1]], output : [[0], [0], [1], [1]]})
-.train({'max iterations' : 20000})
-console.log(net)
-/*
-   Bad output:
-{
-  "architecture": "2-2-1",
-  "inputSize": 2,
-  "outputSize": 1,
-  "hiddenLayersSize": [
-    2
-  ],
-  "connections": "feed forward",
-  "otherParameters": {
-    "data": {
-      "input": [
-        [1,1],
-        [ 0,0],
-        [1,0],
-        [0,1]
-      ],
-      "output": [[0],[0],[1],[1]],
-      "inputLabels": [],
-      "outputLabels": []
-    },
-    "Layers": [
-      {
-        "type": "input",
-        "layer": 0,
-        "neurons": [
-          {
-            "layer": 0,
-            "neuron": 0,
-            "type": "input",
-            "output": 1
-          },
-          {
-            "layer": 0,
-            "neuron": 1,
-            "type": "input",
-            "output": 1
-          }
-        ]
-      },
-      {
-        "type": "hidden",
-        "layer": 1,
-        "neurons": [
-          {
-            "layer": 1,
-            "neuron": 0,
-            "type": "hidden",
-            "inputs": [
-              {
-                "layer": 0,
-                "neuron": 0,
-                "weight": 12.486679112679981,
-                "value": 1
-              },
-              {
-                "layer": 0,
-                "neuron": 1,
-                "weight": 12.487694382307714,
-                "value": 1
-              }
-            ],
-            "activation": {
-              "f": /**id:1d**/ (x, a, b) => { return 1 / (1 + a * Math.exp(-b * x)) },
-              "derivative": /**id:1e**/ (x, a, b) => { return a * b * Math.exp(b * x) / ((a + Math.exp(b * x)) * (a + Math.exp(b * x))) },
-              "parameters": [
-                /**id:1f**/
-                1,
-                1
-              ]
-            },
-            "bias": -5.7323237470412645,
-            "output": 0.9999999956017089,
-            "functional signal": 19.24204975275848,
-            "delta": -3.208032517433969e-8
-          },
-          {
-            "layer": 1,
-            "neuron": 1,
-            "type": "hidden",
-            "inputs": [
-              {
-                "layer": 0,
-                "neuron": 0,
-                "weight": -12.615675394876433,
-                "value": 1
-              },
-              {
-                "layer": 0,
-                "neuron": 1,
-                "weight": 13.02454193664693,
-                "value": 1
-              }
-            ],
-            "activation": {
-              "f": /**ref:1d**/,
-              "derivative": /**ref:1e**/,
-              "parameters": /**ref:1f**/
-            },
-            "bias": 6.400731578574613,
-            "output": 0.9988968641332844,
-            "functional signal": 6.808494622275047,
-            "delta": 0.007356653800420436
-          }
-        ]
-      },
-      {
-        "type": "output",
-        "layer": 2,
-        "neurons": [
-          {
-            "layer": 2,
-            "neuron": 0,
-            "type": "output",
-            "inputs": [
-              {
-                "layer": 1,
-                "neuron": 0,
-                "weight": 61.265218045267645,
-                "value": 0.30857986811774707
-              },
-              {
-                "layer": 1,
-                "neuron": 1,
-                "weight": -56.08904980788667,
-                "value": 0.6610527735810995
-              }
-            ],
-            "activation": {
-              "f": /**ref:1d**/,
-              "derivative": /**ref:1e**/,
-              "parameters": /**ref:1f**/
-            },
-            "bias": 18.069473448210573,
-            "output": 0.47716177185242736,
-            "target": 0,
-            "error": -0.47716177185242736,
-            "functional signal": -0.0914165232750932,
-            "delta": -0.11904156270022229
-          }
-        ],
-        "squareError": 0.22768335651734795
-      }
-    ],
-    "epochs": 20001,
-    "error": 0.335993992401844
-  }
+function orderWeightsTo1DimArray(network) {
+    let L = network
+        .hiddenLayersSize
+        .length + 2, l, w = [],
+        neuronl, neuronlm1,
+        source, target,
+        n = (l) => {
+            return network
+                .otherParameters
+                .Layers[l].neurons.length
+        }
+    for (l = 1; l < L; l++) {
+        for (neuronl = 0; neuronl < n(l); neuronl++) {
+            for (neuronlm1 = -1; neuronlm1 < n(l - 1); neuronlm1++) {
+                source = { layer: l - 1, neuron: neuronlm1 }
+                target = { layer: l, neuron: neuronl }
+                if (neuronlm1 === -1) w.push(network._getBias({ layer: l, neuron: neuronl }))
+                else w.push(network._getWeight({ source, target }))
+            }
+        }
+    }
+    return w
 }
-*/
+function dataDoNotExists(network) {
+    let dt = typeof network.otherParameters.data === 'undefined'
+        || network.otherParameters.data === null
+        || !(network.otherParameters.data.input instanceof Array
+            && network.otherParameters.data.output instanceof Array)
+    return dt
+}
+function areInsertedExampelesInOptions(opt) {
+    let ex = false
+    if (opt.examples instanceof Array) {
+        if (opt.examples.every(example => {
+            return typeof example.input !== 'undefined'
+                && example.output !== 'undefined'
+        })) ex = true
+    }
+    return ex
+}
+// Δw(l, i, j, t + 1) = 
+// Δw(l, i, j, t) 
+// * [g(l, i, j, t) / (g(l, i, j, t - 1) - g(l, i, j, t)]
+// g = J'(w)
+function computedw(dw, g, gm1, mju, ita) {
+    let k, alpha
+    for (k = 0; k < dw.length; k++) {
+        if (dw[k] === 0.0) alpha = ita * g[k]
+        alpha = g[k] / (gm1[k] - g[k])
+        // if dw(t) and dw(t + 1) are
+        // in the same direction...
+        if (dw[k] * alpha > 0) {
+            // if dw(t + 1) / dw(t) is
+            // greater than the maximum
+            // growth factor ...
+            if (alpha > mju) dw[k] *= mju
+            else dw[k] *= alpha
+        }
+    }
+    return dw
+}
+function random(m, seed) {
+    // use this to create controled
+    // random numbers 
+    var i, j, k, rn
+    for (i = 0; i < m; i++) {
+        seed = parseInt(seed);
+        k = parseInt(seed / 127773);
+        seed = parseInt(16807 * (seed - k * 127773) - k * 2836);
+        if (seed < 0) seed += 2147483647;
+        rn = seed * 4.656612875e-10;
+    }
+    // rn 
+    return 2 * Math.random() - 1;
+}
+function sumarize(a, b) {
+    return a + b
+}
+module.exports = { MLP }
